@@ -2,20 +2,17 @@ import asyncio
 import os
 import aiohttp
 import discord
-from discord.ext import commands, tasks
+from discord.ext import commands
 
 BOT_TOKEN = os.getenv("DISCORD_TOKEN")
-USER_TOKEN = os.getenv("USER_TOKEN") 
-
-# Đã gán cứng ID kênh của sếp vào đây để bot không bao giờ bị lệch kênh nữa
-CHANNEL_ID = 1552922576584577034
+USER_TOKEN = os.getenv("USER_TOKEN")
 
 intents = discord.Intents.default()
 intents.message_content = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-async def run_auto_quest():
+async def fetch_quests():
     if not USER_TOKEN:
         return []
 
@@ -83,38 +80,32 @@ async def run_auto_quest():
     except Exception:
         return []
 
-@tasks.loop(hours=24)
-async def auto_quest_task():
-    await bot.wait_until_ready()
-    channel = bot.get_channel(CHANNEL_ID)
-    if not channel:
-        return
-    result = await run_auto_quest()
-    if result:
-        embed = discord.Embed(title="🎯 BÁO CÁO QUEST TỰ ĐỘNG HÀNG NGÀY", color=0x57F287)
-        for idx, q in enumerate(result, 1):
-            status = "✅ Đã xong" if q["completed"] else "⏳ Đang xử lý"
-            embed.add_field(name=f"#{idx}. {q['name']}", value=f"🎮 **Game:** {q['game']}\n📌 **Trạng thái:** {status}", inline=False)
-        await channel.send(embed=embed)
-
 @bot.event
 async def on_ready():
     print(f"Bot connected as {bot.user}")
-    if not auto_quest_task.is_running():
-        auto_quest_task.start()
+
+@bot.command(name="check")
+async def check_command(ctx):
+    # Xóa tin nhắn lệnh !check cho đỡ rác kênh nếu muốn
+    try:
+        await ctx.message.delete()
+    except:
+        pass
+
+    msg = await ctx.send("🔍 Đang quét nhiệm vụ trên tài khoản, đợi xíu...")
     
-    await asyncio.sleep(4)
-    channel = bot.get_channel(CHANNEL_ID)
-    if channel:
-        result = await run_auto_quest()
-        if result:
-            embed = discord.Embed(title="🚀 BÁO CÁO KHỞI ĐỘNG HỆ THỐNG QUEST", description="Danh sách nhiệm vụ quét được trên tài khoản:", color=0x57F287)
-            for idx, q in enumerate(result, 1):
-                status = "✅ Đã xong" if q["completed"] else "⏳ Đang xử lý"
-                embed.add_field(name=f"#{idx}. {q['name']}", value=f"🎮 **Game:** {q['game']}\n📌 **Trạng thái:** {status}", inline=False)
-            await channel.send(embed=embed)
-        else:
-            await channel.send("🔔 Bot đã khởi động online thành công! Hiện tại không có quest mới nào trên tài khoản.")
+    result = await fetch_quests()
+    
+    if not result:
+        await msg.edit(content="⚠️ Không tìm thấy nhiệm vụ nào hoặc token có vấn đề.")
+        return
+
+    embed = discord.Embed(title="🎯 KẾT QUẢ KIỂM TRA QUEST", color=0x57F287)
+    for idx, q in enumerate(result, 1):
+        status = "✅ Đã xong" if q["completed"] else "⏳ Đang xử lý"
+        embed.add_field(name=f"#{idx}. {q['name']}", value=f"🎮 **Game:** {q['game']}\n📌 **Trạng thái:** {status}", inline=False)
+    
+    await msg.edit(content=None, embed=embed)
 
 if BOT_TOKEN:
     bot.run(BOT_TOKEN)
