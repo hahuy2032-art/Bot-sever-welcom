@@ -3,40 +3,28 @@ import logging
 import discord
 from discord.ext import commands
 
-
 # =========================================================
 # CONFIG
 # =========================================================
 
 TOKEN = os.getenv("DISCORD_TOKEN")
-TICKET_CHANNEL_ID = os.getenv("TICKET_CHANNEL_ID")
-STAFF_ROLE_ID = os.getenv("STAFF_ROLE_ID", "")
+
+# Channel ticket panel của m
+TICKET_CHANNEL_ID = 1552922576584577034
+
+# Nếu có role Supporter thì điền ID vào đây.
+# Không có thì để 0.
+STAFF_ROLE_ID = 0
 
 if not TOKEN:
-    raise RuntimeError("❌ Thiếu DISCORD_TOKEN")
-
-if not TICKET_CHANNEL_ID:
-    raise RuntimeError("❌ Thiếu TICKET_CHANNEL_ID")
-
-
-try:
-    TICKET_CHANNEL_ID = int(TICKET_CHANNEL_ID)
-except ValueError:
-    raise RuntimeError("❌ TICKET_CHANNEL_ID phải là số")
-
-
-try:
-    STAFF_ROLE_ID = int(STAFF_ROLE_ID) if STAFF_ROLE_ID else None
-except ValueError:
-    STAFF_ROLE_ID = None
-
+    raise RuntimeError("❌ Thiếu DISCORD_TOKEN trên Railway!")
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(message)s"
 )
 
-log = logging.getLogger("ticket")
+log = logging.getLogger("ticket-bot")
 
 
 # =========================================================
@@ -61,7 +49,7 @@ class TicketBot(commands.Bot):
         )
 
     async def setup_hook(self):
-        # Persistent menu: restart bot vẫn dùng được
+        # Menu vẫn hoạt động sau khi Railway restart
         self.add_view(TicketMenu())
         self.add_view(CloseTicket())
 
@@ -74,7 +62,7 @@ bot = TicketBot()
 
 
 # =========================================================
-# TICKET TYPES
+# LOẠI TICKET
 # =========================================================
 
 TICKET_TYPES = {
@@ -117,17 +105,17 @@ TICKET_TYPES = {
 
 def get_staff_role(guild):
 
-    if not STAFF_ROLE_ID:
+    if STAFF_ROLE_ID == 0:
         return None
 
     return guild.get_role(STAFF_ROLE_ID)
 
 
 # =========================================================
-# FIND USER TICKET
+# TÌM TICKET ĐANG MỞ
 # =========================================================
 
-def find_user_ticket(guild, user_id):
+def find_existing_ticket(guild, user_id):
 
     for channel in guild.text_channels:
 
@@ -143,48 +131,39 @@ def find_user_ticket(guild, user_id):
 
 
 # =========================================================
-# CREATE TICKET
+# TẠO TICKET
 # =========================================================
 
-async def create_ticket(
-    interaction: discord.Interaction,
-    ticket_type: str
-):
+async def create_ticket(interaction, ticket_type):
 
     guild = interaction.guild
     user = interaction.user
 
     if not guild:
-
         await interaction.response.send_message(
-            "❌ Chỉ dùng được trong server.",
+            "❌ Chỉ sử dụng trong server.",
             ephemeral=True
         )
         return
 
-    # -----------------------------------------------------
-    # CHECK OLD TICKET
-    # -----------------------------------------------------
-
-    old_ticket = find_user_ticket(
+    # Kiểm tra ticket cũ
+    old_ticket = find_existing_ticket(
         guild,
         user.id
     )
 
     if old_ticket:
-
         await interaction.response.send_message(
             f"❌ Bạn đang có ticket: {old_ticket.mention}",
             ephemeral=True
         )
-
         return
 
     info = TICKET_TYPES[ticket_type]
 
-    # -----------------------------------------------------
+    # =====================================================
     # PERMISSION
-    # -----------------------------------------------------
+    # =====================================================
 
     overwrites = {
 
@@ -225,33 +204,25 @@ async def create_ticket(
             )
         )
 
-    # -----------------------------------------------------
-    # FIND CATEGORY
-    # -----------------------------------------------------
+    # =====================================================
+    # CATEGORY
+    # =====================================================
 
-    category = None
-
-    # Nếu channel panel nằm trong category,
-    # ticket cũng tự nằm cùng category.
     panel_channel = guild.get_channel(
         TICKET_CHANNEL_ID
     )
 
-    if isinstance(
-        panel_channel,
-        discord.CategoryChannel
-    ):
-        category = panel_channel
+    category = None
 
-    elif isinstance(
+    if isinstance(
         panel_channel,
         discord.TextChannel
     ):
         category = panel_channel.category
 
-    # -----------------------------------------------------
-    # NAME
-    # -----------------------------------------------------
+    # =====================================================
+    # CHANNEL NAME
+    # =====================================================
 
     username = user.display_name.lower()
 
@@ -267,23 +238,21 @@ async def create_ticket(
         f"{info['prefix']}-{username}"
     )[:100]
 
-    # -----------------------------------------------------
+    # =====================================================
     # CREATE CHANNEL
-    # -----------------------------------------------------
+    # =====================================================
 
     try:
 
-        ticket_channel = (
-            await guild.create_text_channel(
-                name=channel_name,
-                category=category,
-                overwrites=overwrites,
-                topic=(
-                    f"ticket-owner:{user.id}"
-                    f"|type:{ticket_type}"
-                ),
-                reason="Ticket System"
-            )
+        ticket_channel = await guild.create_text_channel(
+            name=channel_name,
+            category=category,
+            overwrites=overwrites,
+            topic=(
+                f"ticket-owner:{user.id}"
+                f"|type:{ticket_type}"
+            ),
+            reason="Ticket System"
         )
 
     except discord.Forbidden:
@@ -295,13 +264,12 @@ async def create_ticket(
             ),
             ephemeral=True
         )
-
         return
 
     except Exception as e:
 
         log.exception(
-            "Create ticket error: %s",
+            "Lỗi tạo ticket: %s",
             e
         )
 
@@ -309,12 +277,11 @@ async def create_ticket(
             "❌ Không thể tạo ticket.",
             ephemeral=True
         )
-
         return
 
-    # -----------------------------------------------------
-    # EMBED
-    # -----------------------------------------------------
+    # =====================================================
+    # EMBED TICKET
+    # =====================================================
 
     embed = discord.Embed(
         title=(
@@ -326,9 +293,8 @@ async def create_ticket(
             f"{info['description']}\n\n"
             "━━━━━━━━━━━━━━━━━━━━\n\n"
             "📌 **Hãy trình bày vấn đề rõ ràng.**\n"
-            "📎 Có thể gửi ảnh/video/bằng chứng nếu cần.\n\n"
-            "⏳ Đội ngũ hỗ trợ sẽ phản hồi "
-            "khi có thể.\n\n"
+            "📎 Có thể gửi ảnh/video/bằng chứng nếu cần.\n"
+            "⏳ Đội ngũ hỗ trợ sẽ phản hồi sớm nhất có thể.\n\n"
             "━━━━━━━━━━━━━━━━━━━━\n\n"
             "🔒 Ticket này là riêng tư."
         ),
@@ -336,12 +302,8 @@ async def create_ticket(
     )
 
     embed.set_footer(
-        text="Server Support • Ticket System"
+        text="Support Center • Ticket System"
     )
-
-    # -----------------------------------------------------
-    # SEND
-    # -----------------------------------------------------
 
     mention = user.mention
 
@@ -356,21 +318,21 @@ async def create_ticket(
 
     await interaction.response.send_message(
         (
-            f"✅ Ticket đã được tạo!\n"
+            "✅ **Đã tạo ticket!**\n"
             f"👉 {ticket_channel.mention}"
         ),
         ephemeral=True
     )
 
     log.info(
-        "Ticket created | %s | %s",
+        "Ticket created: %s | %s",
         user,
         ticket_type
     )
 
 
 # =========================================================
-# SELECT MENU
+# DROPDOWN
 # =========================================================
 
 class TicketSelect(discord.ui.Select):
@@ -381,42 +343,32 @@ class TicketSelect(discord.ui.Select):
 
             discord.SelectOption(
                 label="Tố cáo người vi phạm",
-                description=(
-                    "Báo cáo thành viên vi phạm "
-                    "nội quy server."
-                ),
+                description="Báo cáo thành viên vi phạm nội quy.",
                 emoji="🚨",
                 value="report"
             ),
 
             discord.SelectOption(
                 label="Tuyển dụng người phát triển server",
-                description=(
-                    "Ứng tuyển Developer / phát triển server."
-                ),
+                description="Ứng tuyển Developer / phát triển server.",
                 emoji="🛠️",
                 value="developer"
             ),
 
             discord.SelectOption(
                 label="Góp ý server",
-                description=(
-                    "Gửi góp ý hoặc ý tưởng cho server."
-                ),
+                description="Gửi góp ý hoặc ý tưởng cho server.",
                 emoji="💡",
                 value="feedback"
             )
-
         ]
 
         super().__init__(
-            placeholder=(
-                "📩 Chọn một chủ đề để mở ticket..."
-            ),
+            placeholder="📩 Chọn một chủ đề để mở ticket...",
             min_values=1,
             max_values=1,
             options=options,
-            custom_id="ticket_select"
+            custom_id="ticket_select_menu"
         )
 
     async def callback(self, interaction):
@@ -428,7 +380,7 @@ class TicketSelect(discord.ui.Select):
 
 
 # =========================================================
-# PERSISTENT MENU
+# MENU
 # =========================================================
 
 class TicketMenu(discord.ui.View):
@@ -445,7 +397,7 @@ class TicketMenu(discord.ui.View):
 
 
 # =========================================================
-# CLOSE BUTTON
+# NÚT ĐÓNG TICKET
 # =========================================================
 
 class CloseTicket(discord.ui.View):
@@ -460,7 +412,7 @@ class CloseTicket(discord.ui.View):
         label="Đóng ticket",
         emoji="🔒",
         style=discord.ButtonStyle.danger,
-        custom_id="ticket_close"
+        custom_id="close_ticket"
     )
     async def close(
         self,
@@ -477,13 +429,17 @@ class CloseTicket(discord.ui.View):
             return
 
         if not channel.topic:
+            await interaction.response.send_message(
+                "❌ Đây không phải ticket.",
+                ephemeral=True
+            )
             return
 
         if not channel.topic.startswith(
             "ticket-owner:"
         ):
             await interaction.response.send_message(
-                "❌ Đây không phải ticket.",
+                "❌ Đây không phải ticket của bot.",
                 ephemeral=True
             )
             return
@@ -514,10 +470,7 @@ class CloseTicket(discord.ui.View):
             discord.Member
         ):
 
-            if (
-                interaction.user.guild_permissions
-                .manage_channels
-            ):
+            if interaction.user.guild_permissions.manage_channels:
                 is_staff = True
 
             staff_role = get_staff_role(
@@ -536,7 +489,6 @@ class CloseTicket(discord.ui.View):
                 "❌ Bạn không có quyền đóng ticket.",
                 ephemeral=True
             )
-
             return
 
         await interaction.response.send_message(
@@ -550,27 +502,33 @@ class CloseTicket(discord.ui.View):
 
 
 # =========================================================
-# PANEL EMBED
+# PANEL
 # =========================================================
 
-def make_panel():
+def panel_embed():
 
     embed = discord.Embed(
         title="🎫  HỖ TRỢ SERVER",
         description=(
-            "Chào mừng bạn đến với trung tâm hỗ trợ! 👋\n\n"
-            "Chọn **một chủ đề** bên dưới để mở "
-            "ticket riêng cho bạn.\n"
+            "Chào mừng bạn đến với **Trung tâm hỗ trợ**! 👋\n\n"
+            "Chọn **một chủ đề** bên dưới để mở ticket "
+            "riêng cho bạn.\n"
             "Đội ngũ hỗ trợ sẽ phản hồi trong thời gian "
             "sớm nhất.\n\n"
+
             "━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+
             "🚨 **TỐ CÁO NGƯỜI VI PHẠM**\n"
-            "Báo cáo thành viên vi phạm nội quy.\n\n"
+            "Báo cáo thành viên vi phạm nội quy server.\n\n"
+
             "🛠️ **TUYỂN DỤNG NGƯỜI PHÁT TRIỂN SERVER**\n"
             "Ứng tuyển hoặc trao đổi về phát triển server.\n\n"
+
             "💡 **GÓP Ý SERVER**\n"
             "Đóng góp ý tưởng và phản hồi cho server.\n\n"
+
             "━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+
             "⚠️ **LƯU Ý**\n"
             "• Không spam ticket.\n"
             "• Không tạo ticket đùa.\n"
@@ -590,7 +548,7 @@ def make_panel():
 
 
 # =========================================================
-# AUTO PANEL
+# TỰ ĐẶT PANEL VÀO CHANNEL
 # =========================================================
 
 async def ensure_panel():
@@ -602,7 +560,8 @@ async def ensure_panel():
     if not channel:
 
         log.error(
-            "❌ Không tìm thấy TICKET_CHANNEL_ID"
+            "❌ Không tìm thấy channel %s",
+            TICKET_CHANNEL_ID
         )
 
         return
@@ -613,7 +572,7 @@ async def ensure_panel():
     ):
 
         log.error(
-            "❌ TICKET_CHANNEL_ID không phải text channel"
+            "❌ ID này không phải Text Channel."
         )
 
         return
@@ -627,18 +586,18 @@ async def ensure_panel():
 
             if (
                 message.author.id == bot.user.id
-                and message.components
+                and len(message.components) > 0
             ):
 
                 try:
 
                     await message.edit(
-                        embed=make_panel(),
+                        embed=panel_embed(),
                         view=TicketMenu()
                     )
 
                     log.info(
-                        "✅ Đã cập nhật panel ticket."
+                        "✅ Panel ticket đã có sẵn."
                     )
 
                     return
@@ -649,25 +608,31 @@ async def ensure_panel():
     except Exception:
 
         log.exception(
-            "❌ Không thể kiểm tra panel cũ."
+            "❌ Không thể đọc lịch sử channel."
         )
 
-    # Không có panel -> tạo mới
+    # Không có panel -> tạo
     try:
 
         await channel.send(
-            embed=make_panel(),
+            embed=panel_embed(),
             view=TicketMenu()
         )
 
         log.info(
-            "✅ Đã tạo panel ticket mới."
+            "✅ Đã tạo panel ticket."
+        )
+
+    except discord.Forbidden:
+
+        log.error(
+            "❌ Bot không có quyền gửi message/embed."
         )
 
     except Exception:
 
         log.exception(
-            "❌ Không thể gửi panel ticket."
+            "❌ Lỗi tạo panel."
         )
 
 
@@ -688,7 +653,6 @@ async def on_ready():
         len(bot.guilds)
     )
 
-    # Tự động dựng panel
     await ensure_panel()
 
 
@@ -698,9 +662,7 @@ async def on_ready():
 
 async def main():
 
-    await bot.start(
-        TOKEN
-    )
+    await bot.start(TOKEN)
 
 
 if __name__ == "__main__":
@@ -708,9 +670,7 @@ if __name__ == "__main__":
     import asyncio
 
     try:
-        asyncio.run(
-            main()
-        )
+        asyncio.run(main())
 
     except KeyboardInterrupt:
         pass
